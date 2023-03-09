@@ -104,6 +104,9 @@ def extract_sample(filename, start_time, sample_duration, sample_title):
                         except IndexError:
                             var = i + 1 == None
             H = psi[:, :] # removing the first row of the psi matrix
+            'Centre observation matrix H'
+
+            H = H - np.mean(H, axis=0)
 
             # Check if columns of psi are orthogonal
             inner_products = np.dot(psi.T, psi)
@@ -114,7 +117,8 @@ def extract_sample(filename, start_time, sample_duration, sample_title):
                   f"If significantly greater than 0, then not")
 
             # Compute the second-order difference matrix, which smoothes the trend line
-            D2 = np.diag([1] * (N - 2), k=-1) + np.diag([-2] * (N - 1), k=0) + np.diag([1] * (N - 2), k=1)  #In Tarvainen, et al, 2002, D2 is a N-3 x N-1 matrix, we differ due to reason stated above.
+            D2 = np.diag([1] * (N - 2), k=-1) + np.diag([-2] * (N - 1), k=0) + np.diag([1] * (N - 2),
+                                                                                       k=1)  # In Tarvainen, et al, 2002, D2 is a N-3 x N-1 matrix, we differ due to reason stated above.
             # Add an extra row of zeros to the bottom of D2 & add an extra column of zeros to the right of D2 to have equal dimensions between matrices for dot products further
             D2 = np.pad(D2, [(0, 1), (0, 0)], mode='constant')
             D2 = np.pad(D2, [(0, 0), (0, 1)], mode='constant')
@@ -126,60 +130,81 @@ def extract_sample(filename, start_time, sample_duration, sample_title):
 
             HTDTdDdH = np.dot(HT, np.dot(D2.T, D2))
 
-            A1 = np.identity(N)
+            I = np.identity(N)
 
-            reg = lambda_val ** 2 * np.dot(D2.T, D2)
-            A = A1 + reg
+            reg = lambda_val **2 * np.dot(D2.T, D2)
+            A = I + reg
+
+            #U, s, V = np.linalg.svd(HTDTdDdH)
+            """Testing singularity of matrix: singularity value decomposition"""
+            #print(s)
+
             print("The other matrices", np.shape(H), np.shape(HTH), np.shape(HTDTdDdH), np.shape(A), np.shape(reg),
                   np.shape(z))
-            z_stat = np.dot(np.linalg.inv(A), z - np.dot(H, np.linalg.solve(HTH + lambda_val ** 2 * HTDTdDdH, np.dot(HT, z))))
-            return z_stat
+
+            #z_stat = np.dot(np.linalg.pinv(A), z - np.dot(H, np.linalg.solve(HTH + lambda_val ** 2 * HTDTdDdH, np.dot(HT, z))))
+            #z_stat = np.dot(np.linalg.inv(A), np.linalg.solve(A, np.dot(HT, z)))
+            z_stat = np.dot((I - np.linalg.inv(A)), z)
+            z_stat = z_stat[:,0]
+            print(z_stat)
 
             """Check if detrending was successful with autocorrelation function plot"""
 
+            """
             # Compute ACF of z_stat
-            acf = sm.tsa.acf(z_stat, nlags=len(z_stat) - 1)
+            acf = sm.acf(z_stat, nlags=len(z_stat) - 1)
 
             # Plot ACF
             fig, ax = plt.subplots(figsize=(10, 5))
             plot_acf(acf, ax=ax)
             plt.show()
+            """
+            return z_stat
 
         z_stationary = detrend_RR(total_RR)
 
         ## Stress Index ##
 
         # Count most common RR occurance and obtain amplitude of most frequent RR
-        count_RR = Counter(z_stat)  # change to RR_interval?? to z_stat Or Total_RR
+        count_RR = Counter(z_stationary)  # change to RR_interval?? to z_stat Or Total_RR
         most_common_RRvalue = count_RR.most_common(1)[0][0]
         most_common_RRcount = count_RR.most_common(1)[0][1]
 
-        print("Most common RR value:", most_common_RRvalue)
+        print("Counting RR data:", count_RR)
         print("Number of occurrences:", most_common_RRcount)
-        AMo = round((round((most_common_RRcount / int(len(z_stat))), 3) * 100), 1)
+
+        #AMo = round((round((most_common_RRcount / int(len(z_stationary))), 3) * 100), 1)
+
+        bin_width = 0.05  # 50ms in seconds
+        bin_edges = np.arange(min(z_stationary), max(z_stationary) + bin_width, bin_width)
+        hist, bin_edges = np.histogram(z_stationary, bins=bin_edges, density=True)
+
+        AMo = round(max(hist) * 100, 1)
         print("Amplitude of most frequent RR :", AMo)
 
         # Calculate Mode and difference between Max and Min of RR list/distribution
 
-        mode = statistics.median(z_stat)
-        diff = max(z_stat) - min(z_stat)
+        mode = statistics.median(z_stationary)
+        diff = max(z_stationary) - min(z_stationary)
+        print("here are: ", diff, max(z_stationary), min(z_stationary), mode)
 
         # Stress Index formula:
 
-        SI = AMo / ((2 * mode) * diff)
+        SI = AMo / (( 2 * mode) * diff)
 
         ## Mean Heart Rate ##
         meanHR = round((sum(total_HR) / int(len(total_HR))), 2)
 
         ## Mean Heart Rate with Kubios formula ##
         meanRR = sum(total_RR) / int(len(total_RR))
-        meanHR2 = round((60 / meanRR), 2 )
+        meanHR2 = round((60 / meanRR), 2)
 
         sample_data = sample.append((meanHR, meanHR2, SI))
 
         sample_info = {'title': sample_title, 'start_time': start_time, 'sample_duration': sample_duration,
                        'data': sample}
         print(sample_info)
+
 
 filename = directory + "PT-14 S01_RR.csv"
 start_time = "00:03:45"
